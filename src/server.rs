@@ -85,7 +85,7 @@ fn handle_connection(mut connection: websocket::sync::Client<std::net::TcpStream
         InitMessage::TcpTunnel(port) => handle_tcp_tunnel(connection, port),
     }
     .inspect_err(|error| {
-        tracing::error!(?error, "failed to handle init request");
+        tracing::error!(?error, "[{peer_addr}] failed to handle init request");
     })
     .ok();
 }
@@ -154,7 +154,7 @@ fn handle_daemon_process(
             .into_io_result()?;
     }
 
-    tracing::info!("daemon thread stopped");
+    tracing::info!("[{peer_addr}] daemon thread stopped");
     Ok(())
 }
 
@@ -243,7 +243,7 @@ fn handle_tcp_tunnel(
     ]
     .into_iter()
     .filter_map(|r| {
-        r.inspect_err(|error| tracing::error!(?error, "thread join error"))
+        r.inspect_err(|error| tracing::error!(?error, "[{peer_addr}] thread join error"))
             .ok()
     })
     .collect();
