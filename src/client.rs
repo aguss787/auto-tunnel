@@ -56,13 +56,13 @@ impl Client {
             let message = daemon_connection.recv_message().into_io_result()?;
             let message = match message {
                 websocket::OwnedMessage::Binary(b) => b,
-                _ => unimplemented!(),
+                _ => panic!("unexpected message type from server"),
             };
             let message = DaemonResponse::from_vec(message)?;
 
             let addresses = match message {
                 DaemonResponse::Ports(addresses) => addresses,
-                _ => unimplemented!(),
+                _ => panic!("unexpected message response from server"),
             };
 
             self.remove_old_tunnels(&addresses);
@@ -259,7 +259,12 @@ fn tunnel_tcp_stream(
 
             let response = match message {
                 websocket::OwnedMessage::Binary(b) => b,
-                _ => unimplemented!(),
+                _ => {
+                    tracing::error!(
+                        "[{peer_addr}] received non binary data from websocket, closing tunnel"
+                    );
+                    break;
+                },
             };
 
             if let Err(error) = tcp_writter.write_all(&response) {
