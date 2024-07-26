@@ -213,7 +213,7 @@ fn tunnel_tcp_stream(
 
     let mut idle_sleep = Backoff::new();
     let tcp_reader_thread = std::thread::spawn(move || {
-        let mut buffer = [0u8; 1024];
+        let mut buffer = [0u8; 32768];
         loop {
             let len = match tcp_reader.read(&mut buffer) {
                 Ok(len) => len,
