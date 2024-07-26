@@ -237,7 +237,7 @@ fn tunnel_tcp_stream(
             if let Err(error) =
                 websocket_writer.send_message(&websocket::Message::binary(&buffer[..len]))
             {
-                tracing::error!(?error, "failed to forward tcp request");
+                tracing::error!(?error, "[{peer_addr}] failed to forward tcp request");
                 break;
             }
         }
@@ -263,7 +263,7 @@ fn tunnel_tcp_stream(
             };
 
             if let Err(error) = tcp_writter.write_all(&response) {
-                tracing::error!(?error, "failed to return tcp response");
+                tracing::error!(?error, "[{peer_addr}] failed to return tcp response");
                 break;
             }
         }
@@ -271,7 +271,7 @@ fn tunnel_tcp_stream(
         if let Err(error) = tcp_writter.shutdown(std::net::Shutdown::Both) {
             match error.kind() {
                 std::io::ErrorKind::NotConnected => {},
-                _ => tracing::error!(?error, "failed to shutdown tcp connection"),
+                _ => tracing::error!(?error, "[{peer_addr}] failed to shutdown tcp connection"),
             }
         }
     });
