@@ -8,12 +8,10 @@ use std::{
     thread::JoinHandle,
 };
 
-use backoff::SystemClock;
 use websocket::stream::sync::Splittable;
 
 use crate::{
-    message::{Address, ByteMessage, DaemonMessage, DaemonResponse, InitMessage},
-    utils::WebSocketResult,
+    backoff::Backoff, message::{Address, ByteMessage, DaemonMessage, DaemonResponse, InitMessage}, utils::WebSocketResult
 };
 
 pub struct Client {
@@ -155,34 +153,6 @@ impl Drop for Tunnel {
     }
 }
 
-struct Backoff {
-    timer: backoff::exponential::ExponentialBackoff<SystemClock>,
-}
-
-impl Backoff {
-    fn new() -> Self {
-        Self {
-            timer: backoff::exponential::ExponentialBackoffBuilder::new()
-                .with_initial_interval(std::time::Duration::from_micros(1))
-                .with_max_interval(std::time::Duration::from_millis(500))
-                .with_multiplier(1.1)
-                .with_max_elapsed_time(None)
-                .build(),
-        }
-    }
-
-    fn reset(&mut self) {
-        backoff::backoff::Backoff::reset(&mut self.timer);
-    }
-
-    fn sleep(&mut self) {
-        let duration = backoff::backoff::Backoff::next_backoff(&mut self.timer)
-            .expect("sleep timer return no backoff time");
-
-        std::thread::sleep(duration);
-    }
-}
-
 fn start_tcp_tunnel(
     server_addr: String,
     host_port: u16,
@@ -241,6 +211,7 @@ fn tunnel_tcp_stream(
     let (mut tcp_reader, mut tcp_writter) = tcp_stream.split().unwrap();
     let (mut websocket_reader, mut websocket_writer) = websocket_client.split().unwrap();
 
+    let mut idle_sleep = Backoff::new();
     let tcp_reader_thread = std::thread::spawn(move || {
         let mut buffer = [0u8; 1024];
         loop {
@@ -248,6 +219,7 @@ fn tunnel_tcp_stream(
                 Ok(len) => len,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     tracing::debug!("[{peer_addr}] non-blocking return from tcp reader");
+                    idle_sleep.sleep();
                     continue;
                 }
                 Err(error) => {
@@ -259,6 +231,8 @@ fn tunnel_tcp_stream(
             if len == 0 {
                 break;
             }
+
+            idle_sleep.reset();
 
             if let Err(error) =
                 websocket_writer.send_message(&websocket::Message::binary(&buffer[..len]))
