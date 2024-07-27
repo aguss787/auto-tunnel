@@ -120,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn test_serge_address() {
+    fn test_serde_address() {
         let address = Address::new("127.0.0.1", 80);
 
         assert_eq!(
