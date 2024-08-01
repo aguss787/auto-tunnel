@@ -11,7 +11,9 @@ use std::{
 use websocket::stream::sync::Splittable;
 
 use crate::{
-    backoff::Backoff, message::{Address, ByteMessage, DaemonMessage, DaemonResponse, InitMessage}, utils::WebSocketResult
+    backoff::Backoff,
+    message::{Address, ByteMessage, DaemonMessage, DaemonResponse, InitMessage},
+    utils::WebSocketResult,
 };
 
 pub struct Client {
@@ -117,9 +119,16 @@ impl Tunnel {
         let thread_stop_flag = stop_flag.clone();
         let thread_address = address.clone();
         let handler = std::thread::spawn(move || {
-            start_tcp_tunnel(server_address.clone(), host_port, thread_address, thread_stop_flag)
-                .inspect_err(|error| tracing::error!(?error, "failed to start tcp tunnel to {server_address}"))
-                .ok();
+            start_tcp_tunnel(
+                server_address.clone(),
+                host_port,
+                thread_address,
+                thread_stop_flag,
+            )
+            .inspect_err(|error| {
+                tracing::error!(?error, "failed to start tcp tunnel to {server_address}")
+            })
+            .ok();
 
             Ok(())
         });
@@ -264,7 +273,7 @@ fn tunnel_tcp_stream(
                         "[{peer_addr}] received non binary data from websocket, closing tunnel"
                     );
                     break;
-                },
+                }
             };
 
             if let Err(error) = tcp_writter.write_all(&response) {
@@ -275,7 +284,7 @@ fn tunnel_tcp_stream(
 
         if let Err(error) = tcp_writter.shutdown(std::net::Shutdown::Both) {
             match error.kind() {
-                std::io::ErrorKind::NotConnected => {},
+                std::io::ErrorKind::NotConnected => {}
                 _ => tracing::error!(?error, "[{peer_addr}] failed to shutdown tcp connection"),
             }
         }

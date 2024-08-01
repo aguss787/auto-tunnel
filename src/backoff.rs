@@ -27,4 +27,3 @@ impl Backoff {
         std::thread::sleep(duration);
     }
 }
-

@@ -1,10 +1,9 @@
-mod utils;
 mod backoff;
+mod utils;
 
-#[cfg(feature = "server")]
-pub mod server;
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "server")]
+pub mod server;
 
 pub mod message;
-

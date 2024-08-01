@@ -1,5 +1,5 @@
-use clap::Parser;
 use auto_tunnel::server::Server;
+use clap::Parser;
 
 #[derive(Parser)]
 struct ServerArgs {

@@ -11,4 +11,3 @@ impl<T> WebSocketResult for Result<T, websocket::WebSocketError> {
         self.map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionAborted, e))
     }
 }
-
