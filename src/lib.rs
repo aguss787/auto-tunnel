@@ -6,4 +6,4 @@ pub mod client;
 #[cfg(feature = "server")]
 pub mod server;
 
-pub mod message;
+pub(crate) mod message;
