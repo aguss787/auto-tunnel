@@ -10,13 +10,13 @@ struct ClientArgs {
 }
 
 fn main() -> std::io::Result<()> {
-    if std::env::var("WT_LOG").is_err() {
-        std::env::set_var("WT_LOG", "INFO");
+    if std::env::var("AT_LOG").is_err() {
+        std::env::set_var("AT_LOG", "INFO");
     }
 
     let args = ClientArgs::parse();
     pretty_env_logger::formatted_builder()
-        .parse_env("WT_LOG")
+        .parse_env("AT_LOG")
         .init();
 
     let client = Client::new().set_port_offset(args.port_offset.unwrap_or_default());

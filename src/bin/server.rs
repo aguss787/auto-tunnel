@@ -7,13 +7,13 @@ struct ServerArgs {
 }
 
 fn main() -> std::io::Result<()> {
-    if std::env::var("WT_LOG").is_err() {
-        std::env::set_var("WT_LOG", "INFO");
+    if std::env::var("AT_LOG").is_err() {
+        std::env::set_var("AT_LOG", "INFO");
     }
 
     let args = ServerArgs::parse();
     pretty_env_logger::formatted_builder()
-        .parse_env("WT_LOG")
+        .parse_env("AT_LOG")
         .init();
 
     let server = Server::new();
