@@ -1,7 +1,9 @@
-use std::{
-    io::{Read, Write},
-    net::ToSocketAddrs,
-};
+/// Server module
+///
+/// This module contains the server implementation for the auto-tunneling daemon.
+/// The server is responsible for handling incoming websocket connections and
+/// forwarding the requests to the appropriate target.
+use std::io::{Read, Write};
 
 use websocket::stream::sync::Splittable;
 
@@ -25,7 +27,7 @@ impl Default for Server {
 }
 
 impl Server {
-    pub fn run<T: ToSocketAddrs>(self, addr: T) -> Result<(), std::io::Error> {
+    pub fn run<T: std::net::ToSocketAddrs>(self, addr: T) -> Result<(), std::io::Error> {
         let ws_server = websocket::server::sync::Server::bind(addr)?;
 
         let connections = ws_server

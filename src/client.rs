@@ -1,3 +1,8 @@
+/// Client module
+///
+/// This module contains the client implementation for the auto-tunneling daemon.
+/// The client is responsible for connecting to the server and creating tunnels
+/// based on the server's specifications.
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Write},
@@ -5,7 +10,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    thread::JoinHandle,
 };
 
 use websocket::stream::sync::Splittable;
@@ -68,24 +72,7 @@ impl Client {
             };
 
             self.remove_old_tunnels(&addresses);
-
-            addresses.iter().for_each(|address| {
-                if self
-                    .tunnels
-                    .get(&address.port())
-                    .map(|t| t.address() != address)
-                    .unwrap_or(false)
-                {
-                    tracing::warn!(
-                        "Skipping tunnel to {address} because tunnel with exists port exists"
-                    );
-                }
-
-                let host_port = address.port() + self.port_offset;
-                self.tunnels.entry(address.port()).or_insert_with(|| {
-                    Tunnel::new(server_addr.to_string(), address.clone(), host_port)
-                });
-            });
+            self.create_missing_tunnel(&server_addr, &addresses);
 
             std::thread::sleep(std::time::Duration::from_secs(5));
         }
@@ -97,6 +84,26 @@ impl Client {
         self.tunnels
             .retain(|_, value| available_addresses.contains(value.address()));
     }
+
+    fn create_missing_tunnel(&mut self, server_addr: &str, addresses: &[Address]) {
+        addresses.iter().for_each(|address| {
+            if self
+                .tunnels
+                .get(&address.port())
+                .map(|t| t.address() != address)
+                .unwrap_or(false)
+            {
+                tracing::warn!(
+                    "Skipping tunnel to {address} because tunnel with exists port exists"
+                );
+            }
+
+            let host_port = address.port() + self.port_offset;
+            self.tunnels.entry(address.port()).or_insert_with(|| {
+                Tunnel::new(server_addr.to_string(), address.clone(), host_port)
+            });
+        });
+    }
 }
 
 impl Default for Client {
@@ -106,7 +113,7 @@ impl Default for Client {
 }
 
 struct Tunnel {
-    handler: Option<JoinHandle<std::io::Result<()>>>,
+    handler: Option<std::thread::JoinHandle<std::io::Result<()>>>,
     stop_flag: Arc<AtomicBool>,
     address: Address,
 }
