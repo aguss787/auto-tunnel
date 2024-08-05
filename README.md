@@ -1,7 +1,9 @@
 # Auto-Tunnel
 
-Auto-Tunnel is a simple tool that allows you to tunnel all registered ports (>=1024) from remote machine to your local machine without exposing all of them to the internet.
-It's useful for developers who works in a remote machine that need access to the services that they run for development and testing purposes.
+Auto-Tunnel is a simple tool that allows you to tunnel all registered ports (>=1024) from remote
+machine to your local machine without exposing all of them to the internet. It's useful for
+developers who works in a remote machine that need access to the services that they run for
+development and testing purposes.
 
 ## Features
 
@@ -12,10 +14,12 @@ It's useful for developers who works in a remote machine that need access to the
 
 ## Building from source
 
-Auto-Tunnel is not distributed in any package manager yet, so you need to build it from source. You will need to have Rust installed in your machine to build this project.
-Please refer to [Rust installation guide](https://www.rust-lang.org/tools/install) to install Rust in your machine.
+Auto-Tunnel is not distributed in any package manager yet, so you need to build it from source. You
+will need to have Rust installed in your machine to build this project. Please refer to
+[Rust installation guide](https://www.rust-lang.org/tools/install) to install Rust in your machine.
 
-For windows build, you will need to install `mingw-w64-gcc` and `x86_64-pc-windows-gnu` target for Rust.
+For windows build, you will need to install `mingw-w64-gcc` and `x86_64-pc-windows-gnu` target for
+Rust.
 
 To build the project, you can run the following command:
 
@@ -85,4 +89,3 @@ To run the client in CLI, you can run the following command:
 ```bash
 auto-tunnel-client --remote ws://<server-ip>:<server-port>
 ```
-
