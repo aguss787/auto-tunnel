@@ -5,6 +5,9 @@ machine to your local machine without exposing all of them to the internet. It's
 developers who works in a remote machine that need access to the services that they run for
 development and testing purposes.
 
+![Auto-Tunnel](docs/images/tunnel.png) _Example of tunneling service ports from linux remote to
+windows local machine_
+
 ## Features
 
 - [x] Dynamically tunnel ports from remote to local machine without any configuration
