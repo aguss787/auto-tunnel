@@ -38,7 +38,7 @@ impl Client {
         self
     }
 
-    pub fn run(mut self, server_addr: &str) -> std::io::Result<()> {
+    pub fn run(mut self, server_addr: &str, dry_run: bool) -> std::io::Result<()> {
         let mut daemon_connection = websocket::client::ClientBuilder::new(server_addr)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
             .connect_insecure()
@@ -72,7 +72,7 @@ impl Client {
             };
 
             self.remove_old_tunnels(&addresses);
-            self.create_missing_tunnel(&server_addr, &addresses);
+            self.create_missing_tunnel(&server_addr, &addresses, dry_run);
 
             std::thread::sleep(std::time::Duration::from_secs(5));
         }
@@ -85,7 +85,7 @@ impl Client {
             .retain(|_, value| available_addresses.contains(value.address()));
     }
 
-    fn create_missing_tunnel(&mut self, server_addr: &str, addresses: &[Address]) {
+    fn create_missing_tunnel(&mut self, server_addr: &str, addresses: &[Address], dry_run: bool) {
         addresses.iter().for_each(|address| {
             if self
                 .tunnels
@@ -100,7 +100,7 @@ impl Client {
 
             let host_port = address.port() + self.port_offset;
             self.tunnels.entry(address.port()).or_insert_with(|| {
-                Tunnel::new(server_addr.to_string(), address.clone(), host_port)
+                Tunnel::new(server_addr.to_string(), address.clone(), host_port, dry_run)
             });
         });
     }
@@ -119,23 +119,25 @@ struct Tunnel {
 }
 
 impl Tunnel {
-    fn new(server_address: String, address: Address, host_port: u16) -> Self {
+    fn new(server_address: String, address: Address, host_port: u16, dry_run: bool) -> Self {
         tracing::info!("initializing tunnel to {address}");
         let stop_flag = Arc::new(AtomicBool::new(false));
 
         let thread_stop_flag = stop_flag.clone();
         let thread_address = address.clone();
         let handler = std::thread::spawn(move || {
-            start_tcp_tunnel(
-                server_address.clone(),
-                host_port,
-                thread_address,
-                thread_stop_flag,
-            )
-            .inspect_err(|error| {
-                tracing::error!(?error, "failed to start tcp tunnel to {server_address}")
-            })
-            .ok();
+            if !dry_run {
+                start_tcp_tunnel(
+                    server_address.clone(),
+                    host_port,
+                    thread_address,
+                    thread_stop_flag,
+                )
+                .inspect_err(|error| {
+                    tracing::error!(?error, "failed to start tcp tunnel to {server_address}")
+                })
+                .ok();
+            }
 
             Ok(())
         });

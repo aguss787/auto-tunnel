@@ -6,6 +6,9 @@ struct ClientArgs {
     #[arg(short, long)]
     port_offset: Option<u16>,
 
+    #[arg(short, long, default_value = "false")]
+    dry_run: bool,
+
     server: String,
 }
 
@@ -20,5 +23,5 @@ fn main() -> std::io::Result<()> {
         .init();
 
     let client = Client::new().set_port_offset(args.port_offset.unwrap_or_default());
-    client.run(&args.server)
+    client.run(&args.server, args.dry_run)
 }
