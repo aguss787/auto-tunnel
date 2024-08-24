@@ -3,7 +3,10 @@
 /// This module contains the server implementation for the auto-tunneling daemon.
 /// The server is responsible for handling incoming websocket connections and
 /// forwarding the requests to the appropriate target.
-use std::io::{Read, Write};
+use std::{
+    collections::{HashMap, HashSet},
+    io::{Read, Write},
+};
 
 use websocket::stream::sync::Splittable;
 
@@ -161,16 +164,21 @@ fn handle_daemon_process(
 }
 
 fn get_ports(excluded_port: u16) -> DaemonResponse {
-    let tcps = procfs::net::tcp()
-        .unwrap()
+    let tcp6s = procfs::net::tcp6().unwrap();
+    let tcp4s = procfs::net::tcp().unwrap();
+    let tcps = tcp4s
         .into_iter()
+        .chain(tcp6s)
+        .inspect(|tcp_entry| tracing::trace!(?tcp_entry, "found tcp port"))
         .filter(|t| t.state == procfs::net::TcpState::Listen)
         .filter(|t| t.local_address.port() >= 1024)
         .filter(|t| t.local_address.port() != excluded_port)
+        .inspect(|tcp_entry| tracing::trace!(?tcp_entry, "forwarding tcp port"))
         .map(|t| Address::new(t.local_address.ip().to_string(), t.local_address.port()))
-        .collect();
+        .map(|a| (a.port(), a))
+        .collect::<HashMap<_, _>>();
 
-    DaemonResponse::Ports(tcps)
+    DaemonResponse::Ports(tcps.into_values().collect())
 }
 
 fn handle_tcp_tunnel(
