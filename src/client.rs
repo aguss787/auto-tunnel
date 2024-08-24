@@ -72,7 +72,7 @@ impl Client {
             };
 
             self.remove_old_tunnels(&addresses);
-            self.create_missing_tunnel(&server_addr, &addresses, dry_run);
+            self.create_missing_tunnel(server_addr, &addresses, dry_run);
 
             std::thread::sleep(std::time::Duration::from_secs(5));
         }

@@ -4,7 +4,7 @@
 /// The server is responsible for handling incoming websocket connections and
 /// forwarding the requests to the appropriate target.
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::{Read, Write},
 };
 
