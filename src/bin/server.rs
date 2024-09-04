@@ -1,4 +1,4 @@
-use auto_tunnel::server::Server;
+use auto_tunnel::tcp_server::Server;
 use clap::Parser;
 
 #[derive(Parser)]

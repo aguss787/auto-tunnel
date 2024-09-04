@@ -57,6 +57,31 @@ impl ToSocketAddrs for Address {
     }
 }
 
+pub trait TcpMessage {
+    fn from_bytes(raw: Vec<u8>) -> Result<Self, std::io::Error>
+    where
+        Self: Sized;
+    fn to_bytes(&self) -> Result<Vec<u8>, std::io::Error>;
+}
+
+impl<T> TcpMessage for T
+where
+    T: Serialize + DeserializeOwned,
+{
+    fn from_bytes(raw: Vec<u8>) -> Result<Self, std::io::Error> {
+        serde_json::from_slice::<Self>(&raw)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{e:?}")))
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>, std::io::Error> {
+        let mut data = serde_json::to_vec(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}")))?;
+
+        data.extend(b"\0\0");
+        Ok(data)
+    }
+}
+
 pub trait ByteMessage {
     fn from_vec(raw: Vec<u8>) -> Result<Self, std::io::Error>
     where
@@ -90,7 +115,7 @@ mod tests {
             InitMessage::TcpTunnel(Address::new("127.0.0.1", 80)),
         ] {
             assert_eq!(
-                InitMessage::from_vec(message.to_vec().unwrap()).unwrap(),
+                InitMessage::from_bytes(message.to_bytes().unwrap()).unwrap(),
                 message,
             )
         }
@@ -100,7 +125,7 @@ mod tests {
     fn test_serde_daemon_message() {
         for message in [DaemonMessage::GetPorts] {
             assert_eq!(
-                DaemonMessage::from_vec(message.to_vec().unwrap()).unwrap(),
+                DaemonMessage::from_bytes(message.to_bytes().unwrap()).unwrap(),
                 message,
             )
         }
@@ -113,7 +138,7 @@ mod tests {
             DaemonResponse::Ports(vec![]),
         ] {
             assert_eq!(
-                DaemonResponse::from_vec(message.to_vec().unwrap()).unwrap(),
+                DaemonResponse::from_bytes(message.to_bytes().unwrap()).unwrap(),
                 message,
             )
         }
@@ -124,7 +149,7 @@ mod tests {
         let address = Address::new("127.0.0.1", 80);
 
         assert_eq!(
-            Address::from_vec(address.to_vec().unwrap()).unwrap(),
+            Address::from_bytes(address.to_bytes().unwrap()).unwrap(),
             address
         )
     }
