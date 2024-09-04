@@ -15,11 +15,25 @@ use crate::{
     utils::WebSocketResult,
 };
 
-pub struct Server;
+pub struct Server {
+    port_filter: Option<PortFilter>,
+}
 
 impl Server {
     pub fn new() -> Self {
-        Server
+        Server { port_filter: None }
+    }
+
+    pub fn with_whitelist(ports: Vec<u16>) -> Self {
+        Server {
+            port_filter: Some(PortFilter::Whitelist(ports)),
+        }
+    }
+
+    pub fn with_blacklist(ports: Vec<u16>) -> Self {
+        Server {
+            port_filter: Some(PortFilter::Blacklist(ports)),
+        }
     }
 }
 
@@ -31,7 +45,8 @@ impl Default for Server {
 
 impl Server {
     pub fn run<T: std::net::ToSocketAddrs>(self, addr: T) -> Result<(), std::io::Error> {
-        let ws_server = websocket::server::sync::Server::bind(addr)?;
+        let addrs = addr.to_socket_addrs()?.collect::<Vec<_>>();
+        let ws_server = websocket::server::sync::Server::bind(&addr)?;
 
         let connections = ws_server
             .inspect(|c| {
@@ -41,6 +56,11 @@ impl Server {
             })
             .filter_map(Result::ok);
 
+        let mut port_filter = self.port_filter.unwrap_or(PortFilter::Blacklist(vec![]));
+        if port_filter.is_blacklist() {
+            port_filter.add_port(addrs.iter().map(|a| a.port()));
+        }
+
         for connection in connections {
             let Ok(connection) = connection.accept().map_err(|(_, error)| {
                 tracing::error!(?error, "failed to accept websocket connection")
@@ -48,14 +68,18 @@ impl Server {
                 continue;
             };
 
-            std::thread::spawn(move || handle_connection(connection));
+            let thread_port_filter = port_filter.clone();
+            std::thread::spawn(move || handle_connection(connection, &thread_port_filter));
         }
 
         Ok(())
     }
 }
 
-fn handle_connection(mut connection: websocket::sync::Client<std::net::TcpStream>) {
+fn handle_connection(
+    mut connection: websocket::sync::Client<std::net::TcpStream>,
+    port_filter: &PortFilter,
+) {
     let peer_addr = connection
         .stream_ref()
         .peer_addr()
@@ -86,7 +110,7 @@ fn handle_connection(mut connection: websocket::sync::Client<std::net::TcpStream
     };
 
     match init_message {
-        InitMessage::DaemonProcess => handle_daemon_process(connection),
+        InitMessage::DaemonProcess => handle_daemon_process(connection, port_filter),
         InitMessage::TcpTunnel(port) => handle_tcp_tunnel(connection, port),
     }
     .inspect_err(|error| {
@@ -97,8 +121,8 @@ fn handle_connection(mut connection: websocket::sync::Client<std::net::TcpStream
 
 fn handle_daemon_process(
     mut connection: websocket::sync::Client<std::net::TcpStream>,
+    port_filter: &PortFilter,
 ) -> Result<(), std::io::Error> {
-    let self_addr = connection.stream_ref().local_addr()?;
     let peer_addr = connection.stream_ref().peer_addr()?;
     tracing::info!("[{peer_addr}] starting daemon thread");
 
@@ -148,8 +172,7 @@ fn handle_daemon_process(
             Ok(message) => match message {
                 DaemonMessage::GetPorts => {
                     tracing::debug!("[{peer_addr}] daemon handler receive GetPorts");
-                    // do not advertise our own port
-                    get_ports(self_addr.port())
+                    get_ports(port_filter)
                 }
             },
         };
@@ -163,7 +186,37 @@ fn handle_daemon_process(
     Ok(())
 }
 
-fn get_ports(excluded_port: u16) -> DaemonResponse {
+#[derive(Debug, Clone)]
+enum PortFilter {
+    Whitelist(Vec<u16>),
+    Blacklist(Vec<u16>),
+}
+
+impl PortFilter {
+    fn allow(&self, port: u16) -> bool {
+        match self {
+            PortFilter::Whitelist(ports) => ports.contains(&port),
+            PortFilter::Blacklist(ports) => !ports.contains(&port),
+        }
+    }
+
+    fn is_blacklist(&self) -> bool {
+        match self {
+            PortFilter::Whitelist(_) => false,
+            PortFilter::Blacklist(_) => true,
+        }
+    }
+
+    fn add_port(&mut self, ports: impl Iterator<Item = u16>) -> &mut Self {
+        match self {
+            PortFilter::Whitelist(v) | PortFilter::Blacklist(v) => v.extend(ports),
+        };
+
+        self
+    }
+}
+
+fn get_ports(filter: &PortFilter) -> DaemonResponse {
     let tcp6s = procfs::net::tcp6().unwrap();
     let tcp4s = procfs::net::tcp().unwrap();
     let tcps = tcp4s
@@ -172,7 +225,7 @@ fn get_ports(excluded_port: u16) -> DaemonResponse {
         .inspect(|tcp_entry| tracing::trace!(?tcp_entry, "found tcp port"))
         .filter(|t| t.state == procfs::net::TcpState::Listen)
         .filter(|t| t.local_address.port() >= 1024)
-        .filter(|t| t.local_address.port() != excluded_port)
+        .filter(|t| filter.allow(t.local_address.port()))
         .inspect(|tcp_entry| tracing::trace!(?tcp_entry, "forwarding tcp port"))
         .map(|t| Address::new(t.local_address.ip().to_string(), t.local_address.port()))
         .map(|a| (a.port(), a))
