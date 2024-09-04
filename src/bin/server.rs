@@ -9,9 +9,11 @@ struct ServerArgs {
     blacklist: Vec<u16>,
 
     bind: Option<String>,
+    port: Option<u16>,
 }
 
-fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
     if std::env::var("AT_LOG").is_err() {
         std::env::set_var("AT_LOG", "INFO");
     }
@@ -33,8 +35,9 @@ fn main() -> std::io::Result<()> {
         Server::new()
     };
 
-    let bind = args.bind.as_deref().unwrap_or("0.0.0.0:3000");
+    let bind = args.bind.as_deref().unwrap_or("0.0.0.0");
+    let port = args.port.unwrap_or(3000);
 
-    tracing::info!("listening on ws://{bind}");
-    server.run(bind)
+    tracing::info!("listening on ws://{bind}:{port}");
+    server.run((bind, port)).await
 }

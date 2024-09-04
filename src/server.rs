@@ -8,6 +8,10 @@ use std::{
     io::{Read, Write},
 };
 
+use futures_util::sink::SinkExt;
+use futures_util::{future::join_all, stream::StreamExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 use websocket::stream::sync::Splittable;
 
 use crate::{
@@ -44,60 +48,44 @@ impl Default for Server {
 }
 
 impl Server {
-    pub fn run<T: std::net::ToSocketAddrs>(self, addr: T) -> Result<(), std::io::Error> {
-        let addrs = addr.to_socket_addrs()?.collect::<Vec<_>>();
-        let ws_server = websocket::server::sync::Server::bind(&addr)?;
-
-        let connections = ws_server
-            .inspect(|c| {
-                if let Err(error) = c {
-                    tracing::error!(?error, "failed to get websocket connection");
-                }
-            })
-            .filter_map(Result::ok);
-
+    pub async fn run(self, addr: (&str, u16)) -> Result<(), std::io::Error> {
         let mut port_filter = self.port_filter.unwrap_or(PortFilter::Blacklist(vec![]));
         if port_filter.is_blacklist() {
-            port_filter.add_port(addrs.iter().map(|a| a.port()));
+            port_filter.add_port([addr.1].into_iter());
         }
 
-        for connection in connections {
-            let Ok(connection) = connection.accept().map_err(|(_, error)| {
+        let listener = TcpListener::bind(addr).await?;
+        tracing::trace!("listener started");
+        loop {
+            let Ok((connection, _)) = listener.accept().await.inspect_err(|error| {
                 tracing::error!(?error, "failed to accept websocket connection")
             }) else {
                 continue;
             };
 
             let thread_port_filter = port_filter.clone();
-            std::thread::spawn(move || handle_connection(connection, &thread_port_filter));
+            tokio::spawn(handle_connection(connection, thread_port_filter));
         }
-
-        Ok(())
     }
 }
 
-fn handle_connection(
-    mut connection: websocket::sync::Client<std::net::TcpStream>,
-    port_filter: &PortFilter,
-) {
-    let peer_addr = connection
-        .stream_ref()
-        .peer_addr()
-        .expect("unable to get peer addr");
-
+async fn handle_connection(connection: TcpStream, port_filter: PortFilter) {
+    tracing::trace!("handling new connection");
+    let peer_addr = connection.peer_addr().expect("unable to get peer addr");
     tracing::info!("[{peer_addr}] handling websocket connection");
 
-    connection
-        .stream_ref()
-        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
-        .expect("unable to set read timeout");
+    let mut connection = accept_async(connection)
+        .await
+        .expect("unable to accept connection");
 
     let init_message = connection
-        .recv_message()
+        .next()
+        .await
+        .expect("no init message")
         .expect("failed to receive init message");
 
     let init_message = match init_message {
-        websocket::OwnedMessage::Binary(body) => body,
+        Message::Binary(body) => body,
         _ => {
             tracing::info!("[{peer_addr}] received invalid init message");
             return;
@@ -110,8 +98,10 @@ fn handle_connection(
     };
 
     match init_message {
-        InitMessage::DaemonProcess => handle_daemon_process(connection, port_filter),
-        InitMessage::TcpTunnel(port) => handle_tcp_tunnel(connection, port),
+        InitMessage::DaemonProcess => {
+            handle_daemon_process(connection, peer_addr, &port_filter).await
+        }
+        InitMessage::TcpTunnel(port) => handle_tcp_tunnel(connection, peer_addr, port).await,
     }
     .inspect_err(|error| {
         tracing::error!(?error, "[{peer_addr}] failed to handle init request");
@@ -119,50 +109,42 @@ fn handle_connection(
     .ok();
 }
 
-fn handle_daemon_process(
-    mut connection: websocket::sync::Client<std::net::TcpStream>,
+async fn handle_daemon_process(
+    mut connection: WebSocketStream<TcpStream>,
+    peer_addr: std::net::SocketAddr,
     port_filter: &PortFilter,
 ) -> Result<(), std::io::Error> {
-    let peer_addr = connection.stream_ref().peer_addr()?;
     tracing::info!("[{peer_addr}] starting daemon thread");
 
     loop {
-        let message = match connection.recv_message() {
-            Ok(message) => message,
-            Err(websocket::WebSocketError::NoDataAvailable) => {
+        let message = match connection.next().await {
+            None => {
                 tracing::debug!("[{peer_addr}] daemon websocket reader closed");
                 break;
             }
-            Err(websocket::WebSocketError::IoError(error))
-                if error.kind() == std::io::ErrorKind::WouldBlock =>
-            {
-                tracing::debug!(
-                    "[{peer_addr}] daemon websocket reader read timeout, closing connection..."
-                );
-                break;
-            }
-            Err(error) => {
+            Some(Err(error)) => {
                 tracing::error!(?error, "[{peer_addr}] error on daemon websocket reader");
                 break;
             }
+            Some(Ok(message)) => message,
         };
 
         tracing::debug!("[{peer_addr}] received daemon message");
 
         let message = match message {
-            websocket::OwnedMessage::Binary(b) => DaemonMessage::from_vec(b),
-            websocket::OwnedMessage::Ping(b) => {
-                connection
-                    .send_message(&websocket::Message::pong(b))
-                    .into_io_result()?;
+            Message::Binary(b) => DaemonMessage::from_vec(b),
+            Message::Ping(b) => {
+                connection.send(Message::Pong(b)).await.into_io_result()?;
                 continue;
             }
             _ => {
                 connection
-                    .send_message(&websocket::Message::binary(
+                    .send(Message::Binary(
                         DaemonResponse::BadRequest(String::from("unknown format")).to_vec()?,
                     ))
+                    .await
                     .into_io_result()?;
+
                 continue;
             }
         };
@@ -178,7 +160,8 @@ fn handle_daemon_process(
         };
 
         connection
-            .send_message(&websocket::Message::binary(reply.to_vec()?))
+            .send(Message::binary(reply.to_vec()?))
+            .await
             .into_io_result()?;
     }
 
@@ -234,43 +217,33 @@ fn get_ports(filter: &PortFilter) -> DaemonResponse {
     DaemonResponse::Ports(tcps.into_values().collect())
 }
 
-fn handle_tcp_tunnel(
-    websocket_connetion: websocket::sync::Client<std::net::TcpStream>,
+async fn handle_tcp_tunnel(
+    connection: WebSocketStream<TcpStream>,
+    peer_addr: std::net::SocketAddr,
     addr: Address,
 ) -> Result<(), std::io::Error> {
-    let peer_addr = websocket_connetion.stream_ref().peer_addr()?;
     tracing::info!("[{peer_addr}] starting tcp tunnel");
     let tcp_client = std::net::TcpStream::connect(addr)?;
 
-    websocket_connetion.stream_ref().set_read_timeout(None)?;
-
     let (mut tcp_reader, mut tcp_writer) = tcp_client.split()?;
-    let (mut websocket_reader, mut websocket_writer) = websocket_connetion.split()?;
+    let (mut websocket_writer, mut websocket_reader) = connection.split();
 
-    let websocket_reader_thread = std::thread::spawn(move || {
+    let websocket_reader_thread = tokio::spawn(async move {
         loop {
-            let message = match websocket_reader.recv_message() {
-                Ok(message) => message,
-                Err(websocket::WebSocketError::NoDataAvailable) => {
+            let message = match websocket_reader.next().await {
+                None => {
                     tracing::debug!("[{peer_addr}] tcp tunnel websocket reader closed");
                     break;
                 }
-                Err(websocket::WebSocketError::IoError(error))
-                    if error.kind() == std::io::ErrorKind::WouldBlock =>
-                {
-                    tracing::debug!(
-                        "[{peer_addr}] tcp tunnel websocket reader read timeout, ignoring..."
-                    );
-                    continue;
-                }
-                Err(error) => {
+                Some(Err(error)) => {
                     tracing::error!(?error, "[{peer_addr}] error on tcp tunnel websocket reader");
                     break;
                 }
+                Some(Ok(message)) => message,
             };
 
             match message {
-                websocket::OwnedMessage::Binary(b) => {
+                Message::Binary(b) => {
                     tcp_writer.write_all(&b)?;
                 }
                 _ => {
@@ -282,7 +255,7 @@ fn handle_tcp_tunnel(
         Ok::<(), std::io::Error>(())
     });
 
-    let websocket_writer_thread = std::thread::spawn(move || {
+    let websocket_writer_thread = tokio::spawn(async move {
         let mut buffer = [0u8; 32768];
         loop {
             let len = tcp_reader.read(&mut buffer)?;
@@ -292,24 +265,23 @@ fn handle_tcp_tunnel(
             }
 
             websocket_writer
-                .send_message(&websocket::Message::binary(&buffer[..len]))
+                .send(Message::binary(&buffer[..len]))
+                .await
                 .into_io_result()?;
         }
 
-        websocket_writer.shutdown_all()?;
+        websocket_writer.close().await.into_io_result()?;
         Ok::<(), std::io::Error>(())
     });
 
-    let result = [
-        websocket_writer_thread.join(),
-        websocket_reader_thread.join(),
-    ]
-    .into_iter()
-    .filter_map(|r| {
-        r.inspect_err(|error| tracing::error!(?error, "[{peer_addr}] thread join error"))
-            .ok()
-    })
-    .collect();
+    let result = join_all([websocket_writer_thread, websocket_reader_thread])
+        .await
+        .into_iter()
+        .filter_map(|r| {
+            r.inspect_err(|error| tracing::error!(?error, "[{peer_addr}] thread join error"))
+                .ok()
+        })
+        .collect();
 
     tracing::debug!("[{peer_addr}] tcp tunnel closed");
 

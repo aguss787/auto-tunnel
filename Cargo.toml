@@ -12,6 +12,10 @@ server = ["dep:procfs"]
 client = []
 
 [dependencies]
+tokio-tungstenite = { version = "0.23" }
+futures-util = { version = "0.3" }
+tokio = { version = "1", features = ["full"] }
+
 websocket = "0.27"
 tracing = { version = "0.1", features = ["log"] }
 pretty_env_logger = "0.5"
@@ -21,3 +25,5 @@ clap = { version = "4", features = ["derive"] }
 backoff = "0.4"
 procfs = { version = "0.16", optional = true }
 
+[profile.release]
+debug = true
