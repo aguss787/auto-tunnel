@@ -12,8 +12,9 @@ windows local machine_
 
 - [x] Dynamically tunnel ports from remote to local machine without any configuration
 - [x] Support multiple remote machine
-- [ ] Support wss protocol
-- [ ] Set a static list of port to tunnel
+- [ ] Support authentication
+- [x] Set a static list of port to advertise by server
+- [ ] Set a static list of port to tunnel by client
 
 ## Building from source
 
