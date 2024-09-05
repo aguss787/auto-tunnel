@@ -91,5 +91,5 @@ WantedBy=multi-user.target
 To run the client in CLI, you can run the following command:
 
 ```bash
-auto-tunnel-client --remote ws://<server-ip>:<server-port>
+auto-tunnel-client --remote <server-ip>:<server-port>
 ```
