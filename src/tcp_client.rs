@@ -29,16 +29,16 @@ impl Client {
         let mut stream_reader = crate::tcp::BufferedMessageStream::<_, 1024>::new(stream_reader);
 
         stream_writer
-            .write(&InitMessage::DaemonProcess.to_bytes()?)
+            .write(&InitMessage::DaemonProcess.to_message()?)
             .await?;
 
         loop {
             tracing::debug!("requesting ports from server");
             stream_writer
-                .write(&DaemonMessage::GetPorts.to_bytes()?)
+                .write(&DaemonMessage::GetPorts.to_message()?)
                 .await?;
 
-            let response = stream_reader.read_message::<DaemonResponse>().await?;
+            let response = stream_reader.read_message::<DaemonResponse, 256>().await?;
             match response {
                 None => {
                     break;
@@ -137,9 +137,11 @@ async fn start_tcp_tunnel(
     host_port: u16,
     address: Address,
     cancelation_token: CancellationToken,
-) -> std::io::Result<()> {
+) {
     tracing::info!("starting tcp listener on 0.0.0.0:{host_port} -> {address}");
-    let tcp_listener = tokio::net::TcpListener::bind(("0.0.0.0", host_port)).await?;
+    let tcp_listener = tokio::net::TcpListener::bind(("0.0.0.0", host_port))
+        .await
+        .expect("unable to start tunnel");
 
     loop {
         let (connection, peer_addr) = select! {
@@ -152,15 +154,28 @@ async fn start_tcp_tunnel(
         };
 
         tracing::info!("[{peer_addr}] tunneling port {address}");
-        let mut tunnel = TcpStream::connect(&server_addr).await?;
-        tunnel
-            .write(&InitMessage::TcpTunnel(address.clone()).to_bytes()?)
-            .await?;
+        let Ok(mut tunnel) = TcpStream::connect(&server_addr)
+            .await
+            .inspect_err(|error| tracing::error!(?error, "failed to connect to server"))
+        else {
+            continue;
+        };
+
+        if tunnel
+            .write(
+                &InitMessage::TcpTunnel(address.clone())
+                    .to_message()
+                    .expect("unable to serialize init message"),
+            )
+            .await
+            .inspect_err(|error| tracing::error!(?error, "failed to send tunnel message"))
+            .is_err()
+        {
+            continue;
+        }
 
         tokio::spawn(tunnel_tcp_stream(connection, tunnel));
     }
-
-    todo!()
 }
 
 async fn tunnel_tcp_stream(
@@ -174,9 +189,16 @@ async fn tunnel_tcp_stream(
     let (tunnel_reader, mut tunnel_writer) = tunnel.split();
     let mut tunnel_reader = crate::tcp::BufferedMessageStream::<_, 1024>::new(tunnel_reader);
 
+    let tcp_from_tunnel_cancel = CancellationToken::new();
+    let tcp_to_tunnel_cancel = tcp_from_tunnel_cancel.clone();
+
     let to_tunnel = async move {
         loop {
-            let data = connection_reader.read_buffer().await?;
+            tracing::trace!("reading from connection");
+            let data = select! {
+                _ = tcp_to_tunnel_cancel.cancelled() => { break; }
+                data = connection_reader.read_buffer() => { data },
+            }?;
 
             match data {
                 Some(data) => tunnel_writer.write_all(data).await?,
@@ -184,12 +206,17 @@ async fn tunnel_tcp_stream(
             }
         }
 
+        tracing::trace!("routine to tunnel finished");
+        tcp_to_tunnel_cancel.cancel();
         Ok::<_, std::io::Error>(())
     };
 
     let from_tunnel = async move {
         loop {
-            let data = tunnel_reader.read_buffer().await?;
+            let data = select! {
+                _ = tcp_from_tunnel_cancel.cancelled() => { break; }
+                data = tunnel_reader.read_buffer() => { data },
+            }?;
 
             match data {
                 Some(data) => connection_writer.write_all(data).await?,
@@ -197,6 +224,8 @@ async fn tunnel_tcp_stream(
             }
         }
 
+        tracing::trace!("routine from tunnel finished");
+        tcp_from_tunnel_cancel.cancel();
         Ok::<_, std::io::Error>(())
     };
 
@@ -206,6 +235,8 @@ async fn tunnel_tcp_stream(
             tracing::error!(?error, "failed to forward tcp connection");
         }
     });
+
+    tracing::debug!("closing tcp tunnel");
 
     Ok(())
 }

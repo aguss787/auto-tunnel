@@ -23,8 +23,10 @@ impl<S, const N: usize> BufferedMessageStream<S, N> {
 }
 
 impl<S: AsyncReadExt + Unpin> BufferedMessageStream<S> {
-    pub async fn read_message<M: TcpMessage>(&mut self) -> Result<Option<M>, Error> {
-        let mut current_message = Vec::<u8>::new();
+    pub async fn read_message<M: TcpMessage, const N: usize>(
+        &mut self,
+    ) -> Result<Option<M>, Error> {
+        let mut current_message = Vec::<u8>::with_capacity(N);
 
         loop {
             if self.buffer_ptr >= self.buffer_end_ptr {
@@ -50,11 +52,12 @@ impl<S: AsyncReadExt + Unpin> BufferedMessageStream<S> {
             return Ok(None);
         }
 
-        Ok(Some(M::from_bytes(current_message)?))
+        Ok(Some(M::from_bytes(&current_message)?))
     }
 
     pub async fn read_buffer(&mut self) -> Result<Option<&[u8]>, Error> {
         if self.buffer_ptr < self.buffer_end_ptr {
+            tracing::trace!("buffer not empty, returning data");
             let left = self.buffer_ptr;
             let right = self.buffer_end_ptr;
             self.buffer_ptr = 0;
@@ -62,6 +65,7 @@ impl<S: AsyncReadExt + Unpin> BufferedMessageStream<S> {
             return Ok(Some(&self.buffer[left..right]));
         }
 
+        tracing::trace!("buffer empty, reading from stream");
         let len = self.stream.read(&mut self.buffer).await?;
         if len == 0 {
             return Ok(None);
@@ -88,11 +92,11 @@ mod tests {
     }
 
     impl TcpMessage for Data {
-        fn from_bytes(raw: Vec<u8>) -> Result<Self, Error> {
-            Ok(Self(raw))
+        fn from_bytes(raw: &[u8]) -> Result<Self, Error> {
+            Ok(Self(raw.to_vec()))
         }
 
-        fn to_bytes(&self) -> Result<Vec<u8>, Error> {
+        fn to_bytes_body(&self) -> Result<Vec<u8>, Error> {
             Ok(self.0.clone())
         }
     }
@@ -101,7 +105,7 @@ mod tests {
     async fn read_single_message() {
         let mut stream = BufferedMessageStream::<&[u8], 1024>::new(b"hello world");
         assert_eq!(
-            stream.read_message::<Data>().await.unwrap(),
+            stream.read_message::<Data, 32>().await.unwrap(),
             Some(Data(Vec::from(b"hello world")))
         );
     }
@@ -110,11 +114,11 @@ mod tests {
     async fn read_multiple_message() {
         let mut stream = BufferedMessageStream::<&[u8], 1024>::new(b"hello world\0\0goodbye world");
         assert_eq!(
-            stream.read_message::<Data>().await.unwrap(),
+            stream.read_message::<Data, 32>().await.unwrap(),
             Some(Data(Vec::from(b"hello world")))
         );
         assert_eq!(
-            stream.read_message::<Data>().await.unwrap(),
+            stream.read_message::<Data, 32>().await.unwrap(),
             Some(Data(Vec::from(b"goodbye world")))
         );
     }
@@ -132,7 +136,7 @@ mod tests {
     async fn read_buffer_after_message() {
         let mut stream = BufferedMessageStream::<&[u8], 1024>::new(b"hello world\0\0something");
         assert_eq!(
-            stream.read_message::<Data>().await.unwrap(),
+            stream.read_message::<Data, 32>().await.unwrap(),
             Some(Data(Vec::from(b"hello world")))
         );
         assert_eq!(stream.read_buffer().await.unwrap(), Some(&b"something"[..]));

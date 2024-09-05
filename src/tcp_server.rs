@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use futures_util::join;
-use tokio::{io::AsyncWriteExt, net::TcpListener};
+use tokio::{io::AsyncWriteExt, net::TcpListener, select};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     message::{Address, DaemonMessage, DaemonResponse, InitMessage, TcpMessage},
@@ -95,7 +96,7 @@ async fn handle_tcp_connection(mut connection: tokio::net::TcpStream, port_filte
 
     let mut reader = BufferedMessageStream::<_, 1024>::new(reader);
     let message = reader
-        .read_message::<InitMessage>()
+        .read_message::<InitMessage, 256>()
         .await
         .unwrap_or_else(|error| {
             tracing::error!(?error, "failed to read message");
@@ -106,7 +107,7 @@ async fn handle_tcp_connection(mut connection: tokio::net::TcpStream, port_filte
         None => {}
         Some(InitMessage::DaemonProcess) => loop {
             let message = reader
-                .read_message::<DaemonMessage>()
+                .read_message::<DaemonMessage, 256>()
                 .await
                 .unwrap_or_else(|error| {
                     tracing::error!(?error, "failed to read daemon message");
@@ -117,7 +118,7 @@ async fn handle_tcp_connection(mut connection: tokio::net::TcpStream, port_filte
                 None => break,
                 Some(DaemonMessage::GetPorts) => {
                     let response = get_ports(&port_filter)
-                        .to_bytes()
+                        .to_message()
                         .expect("unable to serialize port response");
 
                     writer
@@ -144,31 +145,47 @@ async fn forward_tcp(
     mut writer: tokio::net::tcp::WriteHalf<'_>,
     address: Address,
 ) -> Result<(), std::io::Error> {
-    let mut target = tokio::net::TcpStream::connect(address.to_string()).await?;
+    let mut target = tokio::net::TcpStream::connect(address.to_socket()).await?;
     let (target_reader, mut target_writer) = target.split();
     let mut target_reader = BufferedMessageStream::new(target_reader);
 
+    let tcp_from_target_cancel = CancellationToken::new();
+    let tcp_to_target_cancel = tcp_from_target_cancel.clone();
+
     let to_target = async move {
         loop {
-            let data = reader.read_buffer().await?;
+            tracing::trace!("reading from connection");
+            let data = select! {
+                _ = tcp_to_target_cancel.cancelled() => { break; }
+                data = reader.read_buffer() => { data },
+            }?;
 
             match data {
                 Some(data) => target_writer.write_all(data).await?,
                 None => break,
             }
         }
+
+        tracing::trace!("routine to target finished");
+        tcp_to_target_cancel.cancel();
         Ok::<_, std::io::Error>(())
     };
 
     let from_target = async move {
         loop {
-            let data = target_reader.read_buffer().await?;
+            let data = select! {
+                _ = tcp_from_target_cancel.cancelled() => { break; }
+                data = target_reader.read_buffer() => { data },
+            }?;
 
             match data {
                 Some(data) => writer.write_all(data).await?,
                 None => break,
             }
         }
+
+        tracing::trace!("routine from target finished");
+        tcp_from_target_cancel.cancel();
         Ok::<_, std::io::Error>(())
     };
 
@@ -194,6 +211,14 @@ fn get_ports(filter: &PortFilter) -> DaemonResponse {
         .filter(|t| filter.allow(t.local_address.port()))
         .inspect(|tcp_entry| tracing::trace!(?tcp_entry, "forwarding tcp port"))
         .map(|t| Address::new(t.local_address.ip().to_string(), t.local_address.port()))
+        .filter_map(|r| {
+            if let Err(error) = r {
+                tracing::error!(?error, "failed to parse tcp address");
+                None
+            } else {
+                r.ok()
+            }
+        })
         .map(|a| (a.port(), a))
         .collect::<HashMap<_, _>>();
 
