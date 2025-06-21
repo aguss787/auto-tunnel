@@ -13,7 +13,7 @@ impl TcpMessage for InitMessage {
     where
         Self: Sized,
     {
-        let message_type = raw.get(0).ok_or_else(invalid_message_length)?;
+        let message_type = raw.first().ok_or_else(invalid_message_length)?;
         match message_type {
             1 => Ok(Self::DaemonProcess),
             2 => {
@@ -47,7 +47,7 @@ pub enum DaemonMessage {
 
 impl TcpMessage for DaemonMessage {
     fn from_bytes(raw: &[u8]) -> Result<Self, std::io::Error> {
-        let message_type = raw.get(0).ok_or_else(invalid_message_length)?;
+        let message_type = raw.first().ok_or_else(invalid_message_length)?;
 
         match message_type {
             1 => Ok(Self::GetPorts),
@@ -74,7 +74,7 @@ impl TcpMessage for DaemonResponse {
     where
         Self: Sized,
     {
-        serde_json::from_slice(&raw)
+        serde_json::from_slice(raw)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{e:?}")))
     }
 
@@ -108,7 +108,7 @@ impl TcpMessage for Address {
     where
         Self: Sized,
     {
-        let host_len = *(raw.get(0).ok_or_else(invalid_message_length)?) as usize;
+        let host_len = *(raw.first().ok_or_else(invalid_message_length)?) as usize;
 
         let host = raw
             .get(1..1 + host_len)

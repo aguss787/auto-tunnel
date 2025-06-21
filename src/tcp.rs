@@ -71,7 +71,7 @@ impl<S: AsyncReadExt + Unpin> BufferedMessageStream<S> {
             return Ok(None);
         }
 
-        return Ok(Some(&self.buffer[..len]));
+        Ok(Some(&self.buffer[..len]))
     }
 }
 

@@ -29,13 +29,13 @@ impl Client {
         let mut stream_reader = crate::tcp::BufferedMessageStream::<_, 1024>::new(stream_reader);
 
         stream_writer
-            .write(&InitMessage::DaemonProcess.to_message()?)
+            .write_all(&InitMessage::DaemonProcess.to_message()?)
             .await?;
 
         loop {
             tracing::debug!("requesting ports from server");
             stream_writer
-                .write(&DaemonMessage::GetPorts.to_message()?)
+                .write_all(&DaemonMessage::GetPorts.to_message()?)
                 .await?;
 
             let response = stream_reader.read_message::<DaemonResponse, 256>().await?;
@@ -162,7 +162,7 @@ async fn start_tcp_tunnel(
         };
 
         if tunnel
-            .write(
+            .write_all(
                 &InitMessage::TcpTunnel(address.clone())
                     .to_message()
                     .expect("unable to serialize init message"),

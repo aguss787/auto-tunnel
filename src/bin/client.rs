@@ -2,6 +2,7 @@ use auto_tunnel::tcp_client::Client;
 use clap::Parser;
 
 #[derive(Parser)]
+#[command(version)]
 struct ClientArgs {
     #[arg(short, long)]
     port_offset: Option<u16>,

@@ -2,6 +2,7 @@ use auto_tunnel::tcp_server::Server;
 use clap::Parser;
 
 #[derive(Parser)]
+#[command(version)]
 struct ServerArgs {
     #[clap(short, long)]
     whitelist: Vec<u16>,
