@@ -3,6 +3,14 @@ name = "auto-tunnel"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "auto-tunnel-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "auto-tunnel-client"
+path = "src/bin/client.rs"
+
 [features]
 default = ["unix"]
 unix = ["server", "client"]
