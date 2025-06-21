@@ -8,6 +8,7 @@ use crate::message::{Address, DaemonMessage, DaemonResponse, InitMessage, TcpMes
 pub struct Client {
     tunnels: HashMap<u16, Tunnel>,
     port_offset: u16,
+    blacklist: HashSet<u16>,
 }
 
 impl Client {
@@ -15,11 +16,17 @@ impl Client {
         Self {
             tunnels: Default::default(),
             port_offset: 0,
+            blacklist: Default::default(),
         }
     }
 
     pub fn set_port_offset(mut self, port_offset: u16) -> Self {
         self.port_offset = port_offset;
+        self
+    }
+
+    pub fn with_blacklist(mut self, blacklist: impl IntoIterator<Item = u16>) -> Self {
+        self.blacklist = blacklist.into_iter().collect();
         self
     }
 
@@ -68,6 +75,11 @@ impl Client {
 
     fn create_missing_tunnel(&mut self, server_addr: &str, addresses: &[Address], dry_run: bool) {
         addresses.iter().for_each(|address| {
+            if self.blacklist.contains(&address.port()) {
+                tracing::info!("skipping tunnel to {address} because it is blacklisted");
+                return;
+            }
+
             if self
                 .tunnels
                 .get(&address.port())

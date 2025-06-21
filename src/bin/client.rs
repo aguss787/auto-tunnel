@@ -4,6 +4,8 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(version)]
 struct ClientArgs {
+    #[clap(short, long)]
+    blacklist: Vec<u16>,
     #[arg(short, long)]
     port_offset: Option<u16>,
 
@@ -24,6 +26,8 @@ async fn main() -> std::io::Result<()> {
         .parse_env("AT_LOG")
         .init();
 
-    let client = Client::new().set_port_offset(args.port_offset.unwrap_or_default());
+    let client = Client::new()
+        .set_port_offset(args.port_offset.unwrap_or_default())
+        .with_blacklist(args.blacklist);
     client.run(&args.server, args.dry_run).await
 }
